@@ -173,7 +173,87 @@ bot.onText(/\/addwallet/, (msg) => {
   });
 });
 
-// Portfolio Summary
+// List wallets
+bot.onText(/\/listwallets/, (msg) => {
+  const chatId = msg.chat.id;
+  const user = userData[chatId];
+  if (!user || Object.keys(user.wallets).length === 0) {
+    bot.sendMessage(chatId, "❌ No wallets found. Use /addwallet to track wallets.");
+    return;
+  }
+
+  let message = "📜 Your tracked wallets:\n";
+  for (const [chain, wallets] of Object.entries(user.wallets)) {
+    message += `\nChain: ${chains[chain].name}\n`;
+    wallets.forEach((wallet, index) => {
+      message += `${index + 1}. ${wallet}\n`;
+    });
+  }
+
+  bot.sendMessage(chatId, message);
+});
+
+// Check wallets
+bot.onText(/\/checkwallets/, async (msg) => {
+  const chatId = msg.chat.id;
+  const user = userData[chatId];
+  if (!user || Object.keys(user.wallets).length === 0) {
+    bot.sendMessage(chatId, "❌ No wallets found. Use /addwallet to track wallets.");
+    return;
+  }
+
+  let message = "📊 Wallet Balances:\n";
+  for (const [chain, wallets] of Object.entries(user.wallets)) {
+    const tokenPrice = await getTokenPrice(chains[chain].tokenId);
+
+    for (const wallet of wallets) {
+      const balance = await getWalletBalance(wallet, chain);
+      const valueInUSD = balance ? balance * tokenPrice : 0;
+      message += `Chain: ${chains[chain].name}\nWallet: ${wallet}\nBalance: ${balance?.toFixed(8) || "N/A"}\nValue: $${valueInUSD.toFixed(2)}\n\n`;
+    }
+  }
+
+  bot.sendMessage(chatId, message);
+});
+
+// Subscribe to token price alerts
+bot.onText(/\/subscribeprice (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const tokenId = match[1].toLowerCase();
+
+  if (!chains[tokenId] && !(await getTokenPrice(tokenId))) {
+    bot.sendMessage(chatId, "❌ Invalid token. Make sure the token exists on CoinGecko.");
+    return;
+  }
+
+  if (!userData[chatId]) {
+    userData[chatId] = { wallets: {}, notifications: [] };
+  }
+
+  if (userData[chatId].notifications.includes(tokenId)) {
+    bot.sendMessage(chatId, `❌ You are already subscribed to ${tokenId} price alerts.`);
+    return;
+  }
+
+  userData[chatId].notifications.push(tokenId);
+  bot.sendMessage(chatId, `✅ Subscribed to ${tokenId.toUpperCase()} price alerts!`);
+});
+
+// Unsubscribe from token price alerts
+bot.onText(/\/unsubscribeprice (.+)/, (msg, match) => {
+  const chatId = msg.chat.id;
+  const tokenId = match[1].toLowerCase();
+
+  if (!userData[chatId] || !userData[chatId].notifications.includes(tokenId)) {
+    bot.sendMessage(chatId, "❌ You are not subscribed to this token's price alerts.");
+    return;
+  }
+
+  userData[chatId].notifications = userData[chatId].notifications.filter((id) => id !== tokenId);
+  bot.sendMessage(chatId, `✅ Unsubscribed from ${tokenId.toUpperCase()} price alerts.`);
+});
+
+// Portfolio command
 bot.onText(/\/portfolio/, async (msg) => {
   const chatId = msg.chat.id;
   const user = userData[chatId];
@@ -182,8 +262,8 @@ bot.onText(/\/portfolio/, async (msg) => {
     return;
   }
 
-  let totalValue = 0;
-  let message = "📊 Portfolio Summary:\n";
+  let portfolioValue = 0;
+  let message = "💼 Your Portfolio Value:\n";
 
   for (const [chain, wallets] of Object.entries(user.wallets)) {
     const tokenPrice = await getTokenPrice(chains[chain].tokenId);
@@ -191,107 +271,22 @@ bot.onText(/\/portfolio/, async (msg) => {
     for (const wallet of wallets) {
       const balance = await getWalletBalance(wallet, chain);
       const valueInUSD = balance ? balance * tokenPrice : 0;
-      totalValue += valueInUSD;
-
-      message += `Chain: ${chains[chain].name}\nWallet: ${wallet}\nBalance: ${balance?.toFixed(8) || "N/A"}\nValue: $${valueInUSD.toFixed(2)}\n\n`;
+      portfolioValue += valueInUSD;
+      message += `Chain: ${chains[chain].name} Wallet: ${wallet} Value: $${valueInUSD.toFixed(2)}\n`;
     }
   }
 
-  message += `💰 Total Portfolio Value: $${totalValue.toFixed(2)}`;
+  message += `\nTotal Portfolio Value: $${portfolioValue.toFixed(2)}`;
   bot.sendMessage(chatId, message);
 });
 
-// Remaining commands like remove wallet, notifications, etc., can be added similarly.
-
-// Remove wallet
-bot.onText(/\/removewallet/, (msg) => {
-    const chatId = msg.chat.id;
-  
-    if (!userData[chatId] || Object.keys(userData[chatId].wallets).length === 0) {
-      bot.sendMessage(chatId, "❌ You have no wallets to remove.");
-      return;
-    }
-  
-    bot.sendMessage(chatId, "Which chain? (ethereum, bsc, polygon, bitcoin)").then(() => {
-      bot.once("message", (chainMsg) => {
-        const chain = chainMsg.text.toLowerCase();
-        if (!chains[chain] || !userData[chatId].wallets[chain]) {
-          bot.sendMessage(chatId, "❌ No wallets found for the selected chain.");
-          return;
-        }
-  
-        const wallets = userData[chatId].wallets[chain];
-        const walletList = wallets.map((w, index) => `${index + 1}. ${w}`).join("\n");
-  
-        bot.sendMessage(chatId, `Select the wallet to remove:\n${walletList}`).then(() => {
-          bot.once("message", (walletMsg) => {
-            const index = parseInt(walletMsg.text) - 1;
-  
-            if (isNaN(index) || index < 0 || index >= wallets.length) {
-              bot.sendMessage(chatId, "❌ Invalid selection. Try again.");
-              return;
-            }
-  
-            const removedWallet = wallets.splice(index, 1);
-            bot.sendMessage(chatId, `✅ Wallet ${removedWallet} removed successfully.`);
-          });
-        });
-      });
-    });
-  });
-  
-  // Subscribe to token price alerts
-  bot.onText(/\/subscribeprice (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const tokenId = match[1].toLowerCase();
-  
-    if (!chains[tokenId] && !(await getTokenPrice(tokenId))) {
-      bot.sendMessage(chatId, "❌ Invalid token. Make sure the token exists on CoinGecko.");
-      return;
-    }
-  
-    if (!userData[chatId]) {
-      userData[chatId] = { wallets: {}, notifications: [] };
-    }
-  
-    if (userData[chatId].notifications.includes(tokenId)) {
-      bot.sendMessage(chatId, `❌ You are already subscribed to ${tokenId} price alerts.`);
-      return;
-    }
-  
-    userData[chatId].notifications.push(tokenId);
-    bot.sendMessage(chatId, `✅ Subscribed to ${tokenId.toUpperCase()} price alerts!`);
-  });
-  
-  // Unsubscribe from token price alerts
-  bot.onText(/\/unsubscribeprice (.+)/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const tokenId = match[1].toLowerCase();
-  
-    if (!userData[chatId] || !userData[chatId].notifications.includes(tokenId)) {
-      bot.sendMessage(chatId, "❌ You are not subscribed to this token.");
-      return;
-    }
-  
-    userData[chatId].notifications = userData[chatId].notifications.filter((t) => t !== tokenId);
-    bot.sendMessage(chatId, `✅ Unsubscribed from ${tokenId.toUpperCase()} price alerts.`);
-  });
-  
-  // Clear all wallets
-  bot.onText(/\/clearwallets/, (msg) => {
-    const chatId = msg.chat.id;
-  
-    if (!userData[chatId] || Object.keys(userData[chatId].wallets).length === 0) {
-      bot.sendMessage(chatId, "❌ You have no wallets to clear.");
-      return;
-    }
-  
+// Clear all wallets
+bot.onText(/\/clearwallets/, (msg) => {
+  const chatId = msg.chat.id;
+  if (userData[chatId]) {
     userData[chatId].wallets = {};
-    bot.sendMessage(chatId, "✅ All wallets cleared successfully.");
-  });
-  
-  // Scheduled price alerts (optional)
-  setInterval(async () => {
-    await sendPriceAlerts();
-  }, 3600000); // Runs every hour
-  
+    bot.sendMessage(chatId, "✅ All tracked wallets cleared.");
+  } else {
+    bot.sendMessage(chatId, "❌ No wallets to clear.");
+  }
+});
